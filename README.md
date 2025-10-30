@@ -5,17 +5,33 @@
 📄 [Read the paper on arXiv](https://arxiv.org/abs/2504.17192)
 
 **PaperCoder** is a multi-agent LLM system that transforms paper into a code repository.
-It follows a three-stage pipeline: planning, analysis, and code generation, each handled by specialized agents.  
+It follows a three-stage pipeline: planning, analysis, and code generation, each handled by specialized agents with hierarchical memory support.  
 Our method outperforms strong baselines on both Paper2Code and PaperBench and produces faithful, high-quality implementations.
+
+## ✨ New: Hierarchical Memory System
+
+Paper2Code now includes an advanced memory system that learns from previous papers and code implementations:
+
+- 🧠 **Node Memory**: Per-agent context tracking for real-time decision-making
+- 💾 **Short-Term Memory**: Session-level context for current paper processing
+- 🗄️ **Long-Term Memory**: Persistent learning across sessions with vector-based retrieval
+- 🔍 **Semantic Search**: Retrieve similar papers and code patterns using embeddings
+
+This memory system integrates insights from [CodeGen](https://arxiv.org/abs/2203.13474), [AlphaCode](https://arxiv.org/abs/2203.07814), and our PaperCoder research.
+
+[📖 Read the Memory System Documentation](./MEMORY_SYSTEM.md)
 
 ---
 
 ## 🗺️ Table of Contents
 
 - [⚡ Quick Start](#-quick-start)
+- [🏗️ Architecture](#-architecture)
+- [🧠 Memory System](#-memory-system)
 - [📚 Detailed Setup Instructions](#-detailed-setup-instructions)
 - [📦 Paper2Code Benchmark Datasets](#-paper2code-benchmark-datasets)
 - [📊 Model-based Evaluation of Repositories](#-model-based-evaluation-of-repositories-generated-by-papercoder)
+- [🤝 Contributing](#-contributing)
 
 ---
 
@@ -56,6 +72,145 @@ outputs
 ```
 ---
 
+## 🏗️ Architecture
+
+Paper2Code uses a **three-stage multi-agent pipeline** where each stage is handled by specialized agents:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Paper2Code System                         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     MEMORY SYSTEM (New!)                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐  │
+│  │ Node Memory  │  │ Short-Term   │  │   Long-Term Memory   │  │
+│  │ (Per-Agent)  │  │   Memory     │  │ (Cross-Session)      │  │
+│  │              │  │ (Session)    │  │ • Similar Papers     │  │
+│  │ • Planning   │  │              │  │ • Code Patterns      │  │
+│  │ • Analyzing  │  │ • Paper      │  │ • Planning Strategies│  │
+│  │ • Coding     │  │ • Planning   │  │ • Vector Embeddings  │  │
+│  │              │  │ • Analysis   │  │                      │  │
+│  │              │  │ • Code       │  │                      │  │
+│  └──────────────┘  └──────────────┘  └──────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+         ┌────────────────────┴────────────────────┐
+         │                                          │
+         ▼                                          ▼
+┌─────────────────┐                      ┌─────────────────┐
+│  STAGE 1:       │                      │   Input Paper   │
+│  PLANNING       │◄─────────────────────│   (PDF/LaTeX)   │
+│                 │                      └─────────────────┘
+│ • Overall Plan  │
+│ • Architecture  │  Retrieves similar papers
+│ • Task List     │  and strategies from memory
+│ • Config        │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  STAGE 2:       │
+│  ANALYZING      │
+│                 │  Retrieves code patterns
+│ • Logic         │  from long-term memory
+│   Analysis      │
+│ • File-by-File  │
+│   Review        │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  STAGE 3:       │
+│  CODING         │
+│                 │  Uses retrieved patterns
+│ • Code          │  and previous context
+│   Generation    │
+│ • File Writing  │
+└────────┬────────┘
+         │
+         ▼
+┌─────────────────┐
+│  Output Repo    │
+│  • model.py     │
+│  • trainer.py   │
+│  • config.yaml  │
+│  • ...          │
+└─────────────────┘
+```
+
+### Key Components
+
+1. **Planning Agent**
+   - Analyzes paper methodology and experiments
+   - Creates implementation roadmap
+   - Designs architecture and file structure
+   - Generates configuration templates
+   - **Memory Integration**: Retrieves similar papers and planning strategies
+
+2. **Analyzing Agent**
+   - Performs detailed logic analysis for each file
+   - Identifies dependencies and interfaces
+   - Plans implementation details
+   - **Memory Integration**: Uses node memory to track file-level context
+
+3. **Coding Agent**
+   - Generates actual code for each file
+   - Follows architecture and logic analysis
+   - Maintains consistency across files
+   - **Memory Integration**: Retrieves relevant code patterns from memory
+
+---
+
+## 🧠 Memory System
+
+The memory system enables Paper2Code to learn from previous papers and improve over time.
+
+### Three-Level Hierarchy
+
+1. **Node Memory** (Per-Agent, Real-Time)
+   - Tracks recent agent actions and decisions
+   - Maintains current context state
+   - 50-entry rolling window per agent
+   - Fast in-memory lookups
+
+2. **Short-Term Memory** (Session-Level)
+   - Stores current paper being processed
+   - Accumulates planning, analysis, and code
+   - Persisted at session end
+   - Can resume interrupted sessions
+
+3. **Long-Term Memory** (Cross-Session, Persistent)
+   - Vector-indexed paper repository
+   - Code pattern library
+   - Planning strategy database
+   - Similarity-based retrieval
+
+### Usage Example with Memory
+
+```bash
+# Run planning with memory integration (recommended)
+python codes/1_planning_memory.py \
+    --paper_name "Transformer" \
+    --gpt_version "o3-mini" \
+    --pdf_json_path "./examples/Transformer_cleaned.json" \
+    --output_dir "./outputs/Transformer" \
+    --memory_dir "./memory_store"
+```
+
+The memory system will:
+1. Generate an embedding for your paper
+2. Retrieve 3 most similar papers from memory
+3. Find relevant code patterns based on paper content
+4. Enhance prompts with retrieved context
+5. Store your paper and successful patterns for future use
+
+[📖 Full Memory System Documentation](./MEMORY_SYSTEM.md)
+
+---
+
 ## 📚 Detailed Setup Instructions
 
 ### 🛠️ Environment Setup
@@ -77,6 +232,19 @@ pip install vllm
 ```bash
 pip install -r requirements.txt
 ```
+
+### Memory System Dependencies
+
+For the memory system features, you'll also need:
+
+```bash
+# Vector embeddings support
+pip install numpy>=1.24.0
+
+# For local embeddings (optional, for offline use)
+pip install sentence-transformers>=2.2.0
+```
+
 
 ### 📄 (Option) Convert PDF to JSON
 The following process describes how to convert a paper PDF into JSON format.  
@@ -232,3 +400,70 @@ python eval.py \
 🪙 Accumulated total cost so far: $0.16451380
 ============================================
 ```
+
+---
+
+## 🤝 Contributing
+
+We welcome contributions to Paper2Code! Whether you want to:
+- Add support for new LLM providers
+- Improve the memory system
+- Add tests and documentation
+- Fix bugs or enhance features
+
+Please see our [Contributing Guide](./CONTRIBUTING.md) for:
+- Development setup instructions
+- Code style guidelines
+- Testing requirements
+- How to submit pull requests
+
+### Areas We Need Help With
+
+- **Testing**: Adding unit and integration tests
+- **Memory System**: Improving retrieval algorithms and eviction policies
+- **Documentation**: More examples and tutorials
+- **Support**: Additional LLM backends (Anthropic, Cohere, etc.)
+
+---
+
+## 📄 License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+---
+
+## 📚 Citation
+
+If you use Paper2Code in your research, please cite:
+
+```bibtex
+@article{papercoder2025,
+  title={PaperCoder: Automated Code Generation from Scientific Papers},
+  author={Paper2Code Team},
+  journal={arXiv preprint arXiv:2504.17192},
+  year={2025}
+}
+```
+
+---
+
+## 🙏 Acknowledgments
+
+This project integrates insights from:
+- [CodeGen](https://arxiv.org/abs/2203.13474): Multi-turn conversation and context management
+- [AlphaCode](https://arxiv.org/abs/2203.07814): Code clustering and solution retrieval
+- [PaperCoder](https://arxiv.org/abs/2504.17192): Cross-paper learning and methodology awareness
+
+Special thanks to the open-source community for making this possible.
+
+---
+
+## 📧 Contact
+
+For questions, suggestions, or collaboration:
+- Open an issue on [GitHub](https://github.com/Vikaash-dev/Paper2Code/issues)
+- Check our [Discussions](https://github.com/Vikaash-dev/Paper2Code/discussions)
+
+---
+
+**Made with ❤️ by the Paper2Code Team**

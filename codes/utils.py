@@ -1,49 +1,100 @@
+"""Utility functions for Paper2Code multi-agent system.
+
+This module provides helper functions for:
+- Extracting and parsing planning information from LLM trajectories
+- Converting content to structured JSON format
+- Cost calculation and tracking
+- File reading and processing
+- Code extraction from LLM responses
+"""
+
 import json
 import re
 import os
 from datetime import datetime
+from typing import Dict, List, Optional, Tuple, Any, Union
 
-def extract_planning(trajectories_json_file_path):
-    with open(trajectories_json_file_path) as f:
+def extract_planning(trajectories_json_file_path: str) -> List[str]:
+    """Extract planning context from trajectories JSON file.
+    
+    Reads the LLM conversation trajectories and extracts assistant responses,
+    removing thinking tags and limiting to the first 3 planning steps.
+    
+    Args:
+        trajectories_json_file_path: Path to the JSON file containing conversation trajectories
+        
+    Returns:
+        List of extracted context strings from assistant responses (max 3 items)
+        
+    Raises:
+        FileNotFoundError: If the trajectories file doesn't exist
+        json.JSONDecodeError: If the file contains invalid JSON
+    """
+    with open(trajectories_json_file_path, 'r', encoding='utf-8') as f:
         traj = json.load(f)
 
     context_lst = []
     for turn in traj:
         if turn['role'] == 'assistant':
-            # context_lst.append(turn['content'])
             content = turn['content']
+            # Remove thinking tags if present
             if "</think>" in content:
                 content = content.split("</think>")[-1].strip()
             context_lst.append(content)
 
-
+    # Limit to first 3 planning steps
     context_lst = context_lst[:3] 
 
     return context_lst
 
 
 
-def content_to_json(data):
+def content_to_json(data: str) -> Dict[str, Any]:
+    """Convert content string to JSON with fallback parsing strategies.
+    
+    Attempts multiple parsing strategies to extract JSON from LLM-generated content,
+    handling common formatting issues like comments and trailing commas.
+    
+    Args:
+        data: Raw content string containing JSON data
+        
+    Returns:
+        Parsed JSON data as a dictionary
+        
+    Note:
+        Uses a cascade of parsing strategies (content_to_json, content_to_json2, 
+        content_to_json3, content_to_json4) with increasing robustness.
+    """
+    # Remove [CONTENT] tags
     clean_data = re.sub(r'\[CONTENT\]|\[/CONTENT\]', '', data).strip()
 
+    # Remove inline comments
     clean_data = re.sub(r'(".*?"),\s*#.*', r'\1,', clean_data)
 
+    # Remove trailing commas
     clean_data = re.sub(r',\s*\]', ']', clean_data)
 
+    # Remove whitespace
     clean_data = re.sub(r'\n\s*', '', clean_data)
-
 
     # JSON parsing
     try:
         json_data = json.loads(clean_data)
         return json_data
-    except json.JSONDecodeError as e:
-        # print(e)
+    except json.JSONDecodeError:
         return content_to_json2(data)
         
     
-def content_to_json2(data):
-    # remove [CONTENT][/CONTENT]
+def content_to_json2(data: str) -> Dict[str, Any]:
+    """Second-level JSON parsing strategy with more aggressive cleaning.
+    
+    Args:
+        data: Raw content string containing JSON data
+        
+    Returns:
+        Parsed JSON data as a dictionary, or falls back to content_to_json3
+    """
+    # Remove [CONTENT][/CONTENT]
     clean_data = re.sub(r'\[CONTENT\]|\[/CONTENT\]', '', data).strip()
 
     # "~~~~", #comment -> "~~~~",
@@ -51,7 +102,6 @@ def content_to_json2(data):
 
     # "~~~~" #comment → "~~~~"
     clean_data = re.sub(r'(".*?")\s*#.*', r'\1', clean_data)
-
 
     # ("~~~~",] -> "~~~~"])
     clean_data = re.sub(r',\s*\]', ']', clean_data)
@@ -63,11 +113,18 @@ def content_to_json2(data):
         json_data = json.loads(clean_data)
         return json_data
     
-    except json.JSONDecodeError as e:
-        # print("Json parsing error", e)
+    except json.JSONDecodeError:
         return content_to_json3(data)
 
-def content_to_json3(data):
+def content_to_json3(data: str) -> Dict[str, Any]:
+    """Third-level JSON parsing strategy handling quote variations.
+    
+    Args:
+        data: Raw content string containing JSON data
+        
+    Returns:
+        Parsed JSON data as a dictionary, or falls back to content_to_json4
+    """
     # remove [CONTENT] [/CONTENT]
     clean_data = re.sub(r'\[CONTENT\]|\[/CONTENT\]', '', data).strip()
 
@@ -90,41 +147,70 @@ def content_to_json3(data):
         json_data = json.loads(f"""{clean_data}""")
         return json_data
     
-    except json.JSONDecodeError as e:
-        # print(e)
-        
-        # print(f"[DEBUG] utils.py > content_to_json3 ")
-        # return None 
+    except json.JSONDecodeError:
         return content_to_json4(data)
     
-def content_to_json4(data):
-    # 1. Extract Logic Analysis, Task list
+def content_to_json4(data: str) -> Dict[str, Any]:
+    """Final fallback JSON parsing strategy using regex extraction.
+    
+    Attempts to extract specific fields (Logic Analysis, Task list) using regex
+    when standard JSON parsing fails.
+    
+    Args:
+        data: Raw content string containing JSON data
+        
+    Returns:
+        Dictionary with extracted fields, or empty dict if extraction fails
+    """
+    # Extract Logic Analysis and Task list using regex
     pattern = r'"Logic Analysis":\s*(\[[\s\S]*?\])\s*,\s*"Task list":\s*(\[[\s\S]*?\])'
     match = re.search(pattern, data)
 
     if match:
-        logic_analysis = json.loads(match.group(1))
-        task_list = json.loads(match.group(2))
+        try:
+            logic_analysis = json.loads(match.group(1))
+            task_list = json.loads(match.group(2))
 
-        result = {
-            "Logic Analysis": logic_analysis,
-            "Task list": task_list
-        }
+            result = {
+                "Logic Analysis": logic_analysis,
+                "Task list": task_list
+            }
+        except json.JSONDecodeError:
+            result = {}
     else:
         result = {}
 
-    # print(json.dumps(result, indent=2))
     return result
 
-def extract_code_from_content(content):
-    pattern = r'^```(?:\w+)?\s*\n(.*?)(?=^```)```'
-    code = re.findall(pattern, content, re.DOTALL | re.MULTILINE)
+def extract_code_from_content(content: str) -> str:
+    """Extract code from markdown-formatted content.
+    
+    Searches for code blocks with language specifiers (e.g., ```python).
+    
+    Args:
+        content: Text content containing code blocks
+        
+    Returns:
+        Extracted code as a string, or empty string if no code found
+    """
+    pattern = r'```(?:\w+)?\s*\n(.*?)\n\s*```'
+    code = re.findall(pattern, content, re.DOTALL)
     if len(code) == 0:
         return ""
     else:
         return code[0]
     
-def extract_code_from_content2(content):
+def extract_code_from_content2(content: str) -> str:
+    """Alternative method to extract Python code from content.
+    
+    Specifically looks for ```python code blocks.
+    
+    Args:
+        content: Text content containing Python code blocks
+        
+    Returns:
+        Extracted Python code as a string, or empty string with warning if not found
+    """
     pattern = r'```python\s*(.*?)```'
     result = re.search(pattern, content, re.DOTALL)
 
@@ -135,7 +221,15 @@ def extract_code_from_content2(content):
         print("[WARNING] No Python code found.")
     return extracted_code
 
-def format_json_data(data):
+def format_json_data(data: Dict[str, Any]) -> str:
+    """Format JSON data as human-readable text with separators.
+    
+    Args:
+        data: Dictionary containing structured data
+        
+    Returns:
+        Formatted string with section headers and bullet points
+    """
     formatted_text = ""
     for key, value in data.items():
         formatted_text += "-" * 40 + "\n"
@@ -149,7 +243,31 @@ def format_json_data(data):
     return formatted_text
 
 
-def cal_cost(response_json, model_name):
+def cal_cost(response_json: Dict[str, Any], model_name: str) -> Dict[str, Union[str, int, float]]:
+    """Calculate API cost for a given LLM response.
+    
+    Computes input, cached input, and output token costs based on the model's
+    pricing structure. Supports OpenAI models including GPT-4, o1, o3, etc.
+    
+    Args:
+        response_json: Response object from the API containing usage information
+        model_name: Name of the LLM model used (e.g., 'gpt-4o', 'o3-mini')
+        
+    Returns:
+        Dictionary containing:
+            - model_name: Name of the model
+            - actual_input_tokens: Non-cached input tokens
+            - input_cost: Cost for input tokens
+            - cached_tokens: Number of cached tokens
+            - cached_input_cost: Cost for cached tokens
+            - output_tokens: Number of output tokens
+            - output_cost: Cost for output tokens
+            - total_cost: Total cost in USD
+            
+    Note:
+        Prices are in USD per 1 million tokens. Model pricing is kept up-to-date
+        with OpenAI's pricing at the time of implementation.
+    """
     model_cost = {
         # gpt-4.1
         "gpt-4.1": {"input": 2.00, "cached_input": 0.50, "output": 8.00},
@@ -264,7 +382,15 @@ def cal_cost(response_json, model_name):
         'total_cost': total_cost,
     }
 
-def load_accumulated_cost(accumulated_cost_file):
+def load_accumulated_cost(accumulated_cost_file: str) -> float:
+    """Load accumulated cost from a JSON file.
+    
+    Args:
+        accumulated_cost_file: Path to the cost tracking JSON file
+        
+    Returns:
+        Total accumulated cost as a float, or 0.0 if file doesn't exist
+    """
     if os.path.exists(accumulated_cost_file):
         with open(accumulated_cost_file, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -272,11 +398,23 @@ def load_accumulated_cost(accumulated_cost_file):
     else:
         return 0.0
 
-def save_accumulated_cost(accumulated_cost_file, cost):
+def save_accumulated_cost(accumulated_cost_file: str, cost: float) -> None:
+    """Save accumulated cost to a JSON file.
+    
+    Args:
+        accumulated_cost_file: Path to the cost tracking JSON file
+        cost: Total cost to save
+    """
     with open(accumulated_cost_file, "w", encoding="utf-8") as f:
         json.dump({"total_cost": cost}, f)
 
-def print_response(completion_json, is_llm=False):
+def print_response(completion_json: Dict[str, Any], is_llm: bool = False) -> None:
+    """Print the response content from LLM completion.
+    
+    Args:
+        completion_json: Completion response JSON from the API
+        is_llm: If True, expects vLLM format; if False, expects OpenAI format
+    """
     print("============================================")
     if is_llm:
         print(completion_json['text'])
@@ -284,7 +422,24 @@ def print_response(completion_json, is_llm=False):
         print(completion_json['choices'][0]['message']['content'])
     print("============================================\n")
 
-def print_log_cost(completion_json, gpt_version, current_stage, output_dir, total_accumulated_cost):
+def print_log_cost(completion_json: Dict[str, Any], gpt_version: str, 
+                   current_stage: str, output_dir: str, 
+                   total_accumulated_cost: float) -> float:
+    """Print and log cost information for an API call.
+    
+    Calculates the cost for the current API call, updates the total accumulated cost,
+    and logs the information to both console and file.
+    
+    Args:
+        completion_json: Completion response JSON from the API
+        gpt_version: Model version used
+        current_stage: Description of the current stage (e.g., "[Planning] Overall plan")
+        output_dir: Directory to save cost logs
+        total_accumulated_cost: Running total of costs so far
+        
+    Returns:
+        Updated total accumulated cost including this call
+    """
     usage_info = cal_cost(completion_json, gpt_version)
 
     current_cost = usage_info['total_cost']
@@ -311,10 +466,23 @@ def print_log_cost(completion_json, gpt_version, current_stage, output_dir, tota
     return total_accumulated_cost
 
 
-def num_tokens_from_messages(messages, model="gpt-4o-2024-08-06"):
+def num_tokens_from_messages(messages: List[Dict[str, str]], model: str = "gpt-4o-2024-08-06") -> int:
+    """Calculate the number of tokens used by a list of messages.
+    
+    Uses tiktoken to accurately count tokens for cost estimation and context limits.
+    
+    Args:
+        messages: List of message dictionaries with 'role' and 'content' keys
+        model: Model name for selecting the appropriate tokenizer
+        
+    Returns:
+        Total number of tokens in the messages
+        
+    Raises:
+        NotImplementedError: If the model is not supported
+    """
     import tiktoken
     
-    """Return the number of tokens used by a list of messages."""
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
@@ -352,7 +520,6 @@ def num_tokens_from_messages(messages, model="gpt-4o-2024-08-06"):
     for message in messages:
         num_tokens += tokens_per_message
         for key, value in message.items():
-            # num_tokens += len(encoding.encode(value) 
             num_tokens += len(encoding.encode(value, allowed_special={"<|endoftext|>"},disallowed_special=()))
             
             if key == "name":
@@ -362,17 +529,31 @@ def num_tokens_from_messages(messages, model="gpt-4o-2024-08-06"):
 
 
 
-def read_all_files(directory, allowed_ext, is_print=True): 
-    """Recursively read all .py files in the specified directory and return their contents."""
+def read_all_files(directory: str, allowed_ext: List[str], is_print: bool = True) -> Dict[str, str]:
+    """Recursively read all files with specified extensions from a directory.
+    
+    Skips hidden files, directories starting with '.', and files larger than 200KB.
+    
+    Args:
+        directory: Root directory to search
+        allowed_ext: List of allowed file extensions (e.g., ['.py', '.yaml'])
+        is_print: Whether to print skip messages
+        
+    Returns:
+        Dictionary mapping relative file paths to their contents
+        
+    Note:
+        Files larger than 200KB are logged but still included in results.
+    """
     all_files_content = {}
     
     for root, _, files in os.walk(directory):  # Recursively traverse directories
         for filename in files:
             relative_path = os.path.relpath(os.path.join(root, filename), directory)  # Preserve directory structure
 
-            # print(f"fn: {filename}\tdirectory: {directory}")
             _file_name, ext = os.path.splitext(filename)
             
+            # Skip hidden directories
             is_skip = False
             if len(directory) < len(root):
                 root2 = root[len(directory)+1:]
@@ -381,11 +562,13 @@ def read_all_files(directory, allowed_ext, is_print=True):
                         is_skip = True
                         break
             
+            # Skip hidden files, requirements.txt, and files in hidden directories
             if filename.startswith(".") or "requirements.txt" in filename or ext == "" or is_skip:
                 if is_print and ext == "":
                     print(f"[SKIP] {os.path.join(root, filename)}")
                 continue
                 
+            # Check if extension is allowed (special case for README files)
             if ext not in allowed_ext:
                 if _file_name.lower() != "readme": 
                     if is_print:
@@ -396,20 +579,27 @@ def read_all_files(directory, allowed_ext, is_print=True):
                 filepath = os.path.join(root, filename)
                 file_size = os.path.getsize(filepath) # bytes
                 
-                if file_size > 204800: # > 200KB 
+                # Log large files (> 200KB)
+                if file_size > 204800:
                     print(f"[BIG] {filepath} {file_size}")
 
-                with open(filepath, "r") as file: # encoding="utf-8"
+                with open(filepath, "r", encoding="utf-8") as file:
                     all_files_content[relative_path] = file.read()
             except Exception as e:
-                print(e)
+                print(f"[ERROR] {e}")
                 print(f"[SKIP] {os.path.join(root, filename)}")
-    
     
     return all_files_content
 
-def read_python_files(directory):
-    """Recursively read all .py files in the specified directory and return their contents."""
+def read_python_files(directory: str) -> Dict[str, str]:
+    """Recursively read all Python files from a directory.
+    
+    Args:
+        directory: Root directory to search
+        
+    Returns:
+        Dictionary mapping relative file paths to their contents
+    """
     python_files_content = {}
     
     for root, _, files in os.walk(directory):  # Recursively traverse directories
@@ -422,21 +612,34 @@ def read_python_files(directory):
     return python_files_content
   
 
-def extract_json_from_string(text):
-    # Extract content inside ```yaml\n...\n```
+def extract_json_from_string(text: str) -> str:
+    """Extract JSON content from markdown code blocks.
+    
+    Args:
+        text: Text containing ```json...``` code blocks
+        
+    Returns:
+        Extracted JSON string, or empty string if not found
+    """
+    # Extract content inside ```json\n...\n```
     match = re.search(r"```json\n(.*?)\n```", text, re.DOTALL)
 
     if match:
-        yaml_content = match.group(1)
-        return yaml_content
+        json_content = match.group(1)
+        return json_content
     else:
         print("No JSON content found.")
         return ""
 
 
-def get_now_str():
+def get_now_str() -> str:
+    """Get current timestamp as a formatted string.
+    
+    Returns:
+        Timestamp in format: YYYYMMdd_HHmmss (e.g., "20250427_205124")
+    """
     now = datetime.now()
     now = str(now)
     now = now.split(".")[0]
     now = now.replace("-","").replace(" ","_").replace(":","")
-    return now # now - "20250427_205124"
+    return now
