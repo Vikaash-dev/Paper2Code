@@ -193,8 +193,8 @@ def extract_code_from_content(content: str) -> str:
     Returns:
         Extracted code as a string, or empty string if no code found
     """
-    pattern = r'^```(?:\w+)?\s*\n(.*?)(?=^```)```'
-    code = re.findall(pattern, content, re.DOTALL | re.MULTILINE)
+    pattern = r'```(?:\w+)?\s*\n(.*?)\n\s*```'
+    code = re.findall(pattern, content, re.DOTALL)
     if len(code) == 0:
         return ""
     else:
